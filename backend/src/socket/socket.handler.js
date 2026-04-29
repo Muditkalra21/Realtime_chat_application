@@ -1,4 +1,6 @@
 import redis from "../config/redis.js";
+import prisma from "../config/prisma.js";
+import { updateMessageStatus, markConversationAsSeen } from "../services/message.service.js";
 
 // Map of userId -> socketId for quick lookup
 const userSocketMap = {};
@@ -42,13 +44,53 @@ const registerSocketHandlers = (io) => {
     io.emit("getOnlineUsers", onlineList);
 
     // --- Direct Messaging ---
-    socket.on("sendMessage", ({ receiverId, message }) => {
+    socket.on("sendMessage", async ({ receiverId, message }) => {
       const receiverSocketId = userSocketMap[receiverId];
+
       if (receiverSocketId) {
+        // Receiver is online — upgrade status to DELIVERED immediately
         console.log(`📨 [Socket] sendMessage from "${userId}" → "${receiverId}" (messageId: "${message?.id}")`);
-        io.to(receiverSocketId).emit("receiveMessage", message);
+
+        try {
+          const updated = await updateMessageStatus(message.id, "DELIVERED");
+
+          // Send the message to the receiver with DELIVERED status
+          io.to(receiverSocketId).emit("receiveMessage", { ...message, status: "DELIVERED" });
+
+          // Notify the sender that the message was delivered
+          socket.emit("messageStatusUpdated", { messageId: updated.id, status: "DELIVERED" });
+
+          console.log(`✅ [Socket] Message "${message.id}" marked DELIVERED`);
+        } catch (err) {
+          console.error(`[Socket] Failed to update DELIVERED status for "${message.id}":`, err.message);
+          // Still deliver the message even if DB update failed
+          io.to(receiverSocketId).emit("receiveMessage", message);
+        }
       } else {
-        console.warn(`[Socket] sendMessage: receiver "${receiverId}" not online — message not delivered in real-time`);
+        // Receiver is offline — message stays SENT
+        console.warn(`[Socket] sendMessage: receiver "${receiverId}" not online — status remains SENT`);
+      }
+    });
+
+    // --- Read Receipts: messageSeen ---
+    // Fired by the receiver when they open a conversation with senderId
+    socket.on("messageSeen", async ({ senderId }) => {
+      console.log(`👁️  [Socket] messageSeen — "${userId}" read messages from "${senderId}"`);
+
+      try {
+        // Mark all messages from senderId → userId as SEEN in DB
+        const seenIds = await markConversationAsSeen(senderId, userId);
+
+        if (seenIds.length === 0) return;
+
+        // Notify the original sender that their messages were seen
+        const senderSocketId = userSocketMap[senderId];
+        if (senderSocketId) {
+          io.to(senderSocketId).emit("messagesSeenByReceiver", { messageIds: seenIds, seenBy: userId });
+          console.log(`✅ [Socket] Notified "${senderId}" that ${seenIds.length} message(s) were seen`);
+        }
+      } catch (err) {
+        console.error(`[Socket] messageSeen handler error:`, err.message);
       }
     });
 
@@ -73,23 +115,38 @@ const registerSocketHandlers = (io) => {
       console.log(`❌ [Socket] Disconnected — userId: "${userId}", reason: "${reason}"`);
       delete userSocketMap[userId];
 
-      // Remove from Redis
+      const lastSeen = new Date();
+      const lastSeenISO = lastSeen.toISOString();
+
+      // 1. Write lastSeenAt to DB (persistent across Redis/server restarts)
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { lastSeenAt: lastSeen },
+        });
+        console.log(`🕒 [Socket] lastSeenAt saved to DB for "${userId}"`);
+      } catch (err) {
+        console.error(`[Socket] DB lastSeenAt update error for "${userId}":`, err.message);
+      }
+
+      // 2. Also cache in Redis for fast reads
       try {
         if (redis && redis.status === "ready") {
           await redis.srem("online_users", userId);
-          console.log(`⚡ [Socket] Removed "${userId}" from Redis online_users set`);
+          await redis.set(`lastSeen:${userId}`, lastSeenISO);
+          console.log(`⚡ [Socket] Removed "${userId}" from online set, lastSeen cached in Redis`);
         }
       } catch (err) {
-        console.error(`[Socket] Redis SREM error for "${userId}":`, err.message);
+        console.error(`[Socket] Redis disconnect update error for "${userId}":`, err.message);
       }
 
-      // Broadcast updated online users
+      // Broadcast updated online users + last seen timestamp
       const remaining = Object.keys(userSocketMap);
       console.log(`[Socket] ${remaining.length} user(s) still online`);
       io.emit("getOnlineUsers", remaining);
+      io.emit("userLastSeen", { userId, lastSeen: lastSeenISO });
     });
   });
 };
 
 export default registerSocketHandlers;
-
