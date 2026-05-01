@@ -38,8 +38,9 @@ Thumbs.db
 
 # Misc
 .eslintcache
-.AGENT.md
+AGENT.md
 implementation_plan.md
 task.md
 walkthrough.md
 graphify-out/
+.agents

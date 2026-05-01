@@ -33,11 +33,13 @@ Realtime_chat_application/
 │   └── package.json
 ├── frontend/
 │   ├── src/
+│   │   ├── assets/
 │   │   ├── components/
 │   │   ├── context/
-│   │   ├── hooks/
 │   │   ├── pages/
 │   │   ├── services/
+│   │   ├── store/
+│   │   ├── utils/
 │   │   └── App.jsx
 │   ├── .env.example
 │   └── package.json
