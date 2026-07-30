@@ -30,8 +30,8 @@ api.interceptors.response.use(
 
     console.error(`❌ [API] ${error.config?.method?.toUpperCase()} ${url} → ${status} | ${message}`);
 
-    // Handle 401 globally — redirect to login
-    if (status === 401) {
+    // Handle 401 globally — redirect to login (except when logging in)
+    if (status === 401 && !url.includes("/auth/login")) {
       console.warn("[API] 401 Unauthorized — clearing session and redirecting to /login");
       localStorage.removeItem("token");
       localStorage.removeItem("user");

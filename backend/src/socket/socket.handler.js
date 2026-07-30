@@ -2,8 +2,8 @@ import redis from "../config/redis.js";
 import prisma from "../config/prisma.js";
 import { updateMessageStatus, markConversationAsSeen } from "../services/message.service.js";
 
-// Map of userId -> socketId for quick lookup
-const userSocketMap = {};
+// Map of userId -> number of active connections (for multi-tab support)
+const connectedUsers = new Map();
 
 /**
  * Register all Socket.IO event handlers
@@ -21,41 +21,47 @@ const registerSocketHandlers = (io) => {
 
     console.log(`🔌 [Socket] Connected — userId: "${userId}", socketId: "${socket.id}"`);
 
-    // --- Online Presence ---
-    userSocketMap[userId] = socket.id;
+    // --- Online Presence & Multi-tab Support ---
+    socket.join(userId); // Join personal room for multi-tab message routing
 
-    // Add to Redis online set
-    (async () => {
-      try {
-        if (redis && redis.status === "ready") {
-          await redis.sadd("online_users", userId);
-          console.log(`⚡ [Socket] Added "${userId}" to Redis online_users set`);
-        } else {
-          console.warn(`[Socket] Redis not ready (status: "${redis?.status}") — skipping online_users update`);
+    const connectionCount = connectedUsers.get(userId) || 0;
+    connectedUsers.set(userId, connectionCount + 1);
+
+    // Only update Redis if this is their FIRST active tab
+    if (connectionCount === 0) {
+      // Add to Redis online set
+      (async () => {
+        try {
+          if (redis && redis.status === "ready") {
+            await redis.sadd("online_users", userId);
+            console.log(`⚡ [Socket] Added "${userId}" to Redis online_users set`);
+          } else {
+            console.warn(`[Socket] Redis not ready (status: "${redis?.status}") — skipping online_users update`);
+          }
+        } catch (err) {
+          console.error(`[Socket] Redis SADD error for "${userId}":`, err.message);
         }
-      } catch (err) {
-        console.error(`[Socket] Redis SADD error for "${userId}":`, err.message);
-      }
-    })();
+      })();
+    }
 
     // Broadcast updated online users list
-    const onlineList = Object.keys(userSocketMap);
+    const onlineList = Array.from(connectedUsers.keys());
     console.log(`[Socket] Broadcasting ${onlineList.length} online user(s): [${onlineList.join(", ")}]`);
     io.emit("getOnlineUsers", onlineList);
 
     // --- Direct Messaging ---
     socket.on("sendMessage", async ({ receiverId, message }) => {
-      const receiverSocketId = userSocketMap[receiverId];
+      const isReceiverOnline = connectedUsers.has(receiverId);
 
-      if (receiverSocketId) {
+      if (isReceiverOnline) {
         // Receiver is online — upgrade status to DELIVERED immediately
         console.log(`📨 [Socket] sendMessage from "${userId}" → "${receiverId}" (messageId: "${message?.id}")`);
 
         try {
           const updated = await updateMessageStatus(message.id, "DELIVERED");
 
-          // Send the message to the receiver with DELIVERED status
-          io.to(receiverSocketId).emit("receiveMessage", { ...message, status: "DELIVERED" });
+          // Send the message to all of the receiver's open tabs
+          io.to(receiverId).emit("receiveMessage", { ...message, status: "DELIVERED" });
 
           // Notify the sender that the message was delivered
           socket.emit("messageStatusUpdated", { messageId: updated.id, status: "DELIVERED" });
@@ -64,7 +70,7 @@ const registerSocketHandlers = (io) => {
         } catch (err) {
           console.error(`[Socket] Failed to update DELIVERED status for "${message.id}":`, err.message);
           // Still deliver the message even if DB update failed
-          io.to(receiverSocketId).emit("receiveMessage", message);
+          io.to(receiverId).emit("receiveMessage", message);
         }
       } else {
         // Receiver is offline — message stays SENT
@@ -83,10 +89,9 @@ const registerSocketHandlers = (io) => {
 
         if (seenIds.length === 0) return;
 
-        // Notify the original sender that their messages were seen
-        const senderSocketId = userSocketMap[senderId];
-        if (senderSocketId) {
-          io.to(senderSocketId).emit("messagesSeenByReceiver", { messageIds: seenIds, seenBy: userId });
+        // Notify the original sender's open tabs that their messages were seen
+        if (connectedUsers.has(senderId)) {
+          io.to(senderId).emit("messagesSeenByReceiver", { messageIds: seenIds, seenBy: userId });
           console.log(`✅ [Socket] Notified "${senderId}" that ${seenIds.length} message(s) were seen`);
         }
       } catch (err) {
@@ -96,24 +101,33 @@ const registerSocketHandlers = (io) => {
 
     // --- Typing Indicators ---
     socket.on("typing", ({ receiverId }) => {
-      const receiverSocketId = userSocketMap[receiverId];
-      if (receiverSocketId) {
+      if (connectedUsers.has(receiverId)) {
         console.log(`⌨️  [Socket] "${userId}" typing → "${receiverId}"`);
-        io.to(receiverSocketId).emit("userTyping", { senderId: userId });
+        io.to(receiverId).emit("userTyping", { senderId: userId });
       }
     });
 
     socket.on("stopTyping", ({ receiverId }) => {
-      const receiverSocketId = userSocketMap[receiverId];
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit("userStopTyping", { senderId: userId });
+      if (connectedUsers.has(receiverId)) {
+        io.to(receiverId).emit("userStopTyping", { senderId: userId });
       }
     });
 
     // --- Disconnect ---
     socket.on("disconnect", async (reason) => {
-      console.log(`❌ [Socket] Disconnected — userId: "${userId}", reason: "${reason}"`);
-      delete userSocketMap[userId];
+      console.log(`❌ [Socket] Disconnected — userId: "${userId}", socketId: "${socket.id}", reason: "${reason}"`);
+      
+      const currentCount = (connectedUsers.get(userId) || 1) - 1;
+      
+      if (currentCount > 0) {
+        // User still has other tabs open
+        connectedUsers.set(userId, currentCount);
+        console.log(`[Socket] User "${userId}" still has ${currentCount} active tab(s)`);
+        return;
+      }
+      
+      // Last tab closed, mark as fully offline
+      connectedUsers.delete(userId);
 
       const lastSeen = new Date();
       const lastSeenISO = lastSeen.toISOString();
@@ -141,8 +155,8 @@ const registerSocketHandlers = (io) => {
       }
 
       // Broadcast updated online users + last seen timestamp
-      const remaining = Object.keys(userSocketMap);
-      console.log(`[Socket] ${remaining.length} user(s) still online`);
+      const remaining = Array.from(connectedUsers.keys());
+      console.log(`[Socket] ${remaining.length} user(s) still online globally`);
       io.emit("getOnlineUsers", remaining);
       io.emit("userLastSeen", { userId, lastSeen: lastSeenISO });
     });

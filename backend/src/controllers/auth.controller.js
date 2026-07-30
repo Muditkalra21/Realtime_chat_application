@@ -23,6 +23,13 @@ export const register = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
+    // Require at least 2 characters for the domain extension (e.g. .com, .co)
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!emailRegex.test(email)) {
+      console.warn(`[Register] Invalid email format: "${email}"`);
+      return res.status(400).json({ message: "Please provide a valid email address" });
+    }
+
     if (password.length < 6) {
       console.warn(`[Register] Password too short for "${email}"`);
       return res.status(400).json({ message: "Password must be at least 6 characters" });
