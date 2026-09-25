@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import api from "../services/api.js";
 import toast from "react-hot-toast";
+import useChatStore from "./useChatStore.js";
 
 const useAuthStore = create((set) => ({
   user: JSON.parse(localStorage.getItem("user")) || null,
@@ -65,6 +66,15 @@ const useAuthStore = create((set) => ({
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     set({ user: null, token: null });
+    // Clear chat state so stale selectedUser doesn't persist to the next login
+    useChatStore.setState({
+      selectedUser: null,
+      messages: [],
+      users: [],
+      unreadCounts: {},
+      lastSeenMap: {},
+      typingUsers: {},
+    });
     toast.success("Logged out successfully");
   },
 

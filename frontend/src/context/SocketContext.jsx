@@ -46,9 +46,18 @@ export const SocketProvider = ({ children }) => {
     // Receive real-time messages
     newSocket.on("receiveMessage", (message) => {
       const currentSelectedUser = useChatStore.getState().selectedUser;
+      const currentUser = useAuthStore.getState().user;
       console.log(
         `📩 [Socket] receiveMessage — from: "${message.senderId}", activeChat: "${currentSelectedUser?.id}"`
       );
+
+      // Ignore messages sent by ourselves — the REST API already added them optimistically.
+      // This prevents a duplicate when messaging yourself (senderId === our own userId).
+      if (message.senderId === currentUser?.id) {
+        console.log("[Socket] Ignoring receiveMessage from self (already added via REST)");
+        return;
+      }
+
       // Only add to state if we are currently chatting with that person
       if (currentSelectedUser && message.senderId === currentSelectedUser.id) {
         addMessage(message);
