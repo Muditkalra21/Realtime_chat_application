@@ -11,6 +11,7 @@ const useChatStore = create((set, get) => ({
   isLoadingMessages: false,
   typingUsers: {}, // { [userId]: boolean }
   lastSeenMap: {}, // { [userId]: ISO string | null }
+  unreadCounts: {}, // { [userId]: number } — count of unread messages per sender
 
   /**
    * Fetch all users to display in sidebar
@@ -23,8 +24,12 @@ const useChatStore = create((set, get) => ({
       console.log(`✅ [ChatStore] fetchUsers() — loaded ${res.data.length} contacts`);
       // Build lastSeenMap from the initial response
       const lastSeenMap = {};
-      res.data.forEach((u) => { if (u.lastSeen) lastSeenMap[u.id] = u.lastSeen; });
-      set({ users: res.data, lastSeenMap });
+      const unreadCounts = {};
+      res.data.forEach((u) => {
+        if (u.lastSeen) lastSeenMap[u.id] = u.lastSeen;
+        if (u.unreadCount) unreadCounts[u.id] = u.unreadCount;
+      });
+      set({ users: res.data, lastSeenMap, unreadCounts });
     } catch (err) {
       console.error("❌ [ChatStore] fetchUsers() failed:", err.response?.data?.message || err.message);
       toast.error("Failed to load contacts");
@@ -37,10 +42,15 @@ const useChatStore = create((set, get) => ({
    * Set the currently active chat partner
    */
   setSelectedUser: (user) => {
-    // If this user is already selected, do nothing — avoids clearing messages needlessly
     if (get().selectedUser?.id === user?.id) return;
     console.log(`[ChatStore] setSelectedUser() — "${user?.username}" (id: "${user?.id}")`);
-    set({ selectedUser: user, messages: [], typingUsers: {} });
+    // Clear unread count for this user when opening their chat
+    set((state) => ({
+      selectedUser: user,
+      messages: [],
+      typingUsers: {},
+      unreadCounts: { ...state.unreadCounts, [user?.id]: 0 },
+    }));
   },
 
   /**
@@ -153,6 +163,20 @@ const useChatStore = create((set, get) => ({
       messages: state.messages.map((msg) =>
         idSet.has(msg.id) ? { ...msg, status: "SEEN" } : msg
       ),
+    }));
+  },
+
+  /**
+   * Increment unread count for a specific sender.
+   * Called when a message arrives from a chat that is NOT currently open.
+   * @param {string} senderId
+   */
+  incrementUnread: (senderId) => {
+    set((state) => ({
+      unreadCounts: {
+        ...state.unreadCounts,
+        [senderId]: (state.unreadCounts[senderId] || 0) + 1,
+      },
     }));
   },
 

@@ -13,6 +13,20 @@ export const getAllUsersWithOnlineStatus = async (currentUserId) => {
     orderBy: { username: "asc" },
   });
 
+  // Count unread messages per sender in a single efficient query
+  const unreadGroups = await prisma.message.groupBy({
+    by: ["senderId"],
+    where: {
+      receiverId: currentUserId,
+      status: { in: ["SENT", "DELIVERED"] },
+    },
+    _count: { id: true },
+  });
+
+  // Build a fast lookup map: senderId -> unread count
+  const unreadMap = {};
+  unreadGroups.forEach((g) => { unreadMap[g.senderId] = g._count.id; });
+
   const enriched = await Promise.all(
     users.map(async (user) => {
       let isOnline = false;
@@ -35,7 +49,7 @@ export const getAllUsersWithOnlineStatus = async (currentUserId) => {
         lastSeen = user.lastSeenAt.toISOString();
       }
 
-      return { ...user, isOnline, lastSeen };
+      return { ...user, isOnline, lastSeen, unreadCount: unreadMap[user.id] || 0 };
     })
   );
 

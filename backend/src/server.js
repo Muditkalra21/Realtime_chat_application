@@ -12,6 +12,7 @@ import uploadRoutes from "./routes/upload.routes.js";
 
 // Socket handler
 import registerSocketHandlers from "./socket/socket.handler.js";
+import prisma from "./config/prisma.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -86,13 +87,25 @@ process.on("uncaughtException", (err) => {
 
 // --- Start Server ---
 const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => {
-  console.log("─────────────────────────────────────────");
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📦 Environment  : ${process.env.NODE_ENV || "development"}`);
-  console.log(`🌐 CORS Origin  : ${process.env.CLIENT_URL || "http://localhost:5173"}`);
-  console.log(`🗃️  Database     : ${process.env.DATABASE_URL ? "✅ configured" : "❌ NOT SET"}`);
-  console.log(`⚡ Redis        : ${process.env.REDIS_URL ? "✅ configured" : "⚠️  not set (fallback active)"}`);
-  console.log(`☁️  Cloudinary   : ${process.env.CLOUDINARY_CLOUD_NAME ? "✅ configured" : "⚠️  not configured"}`);
-  console.log("─────────────────────────────────────────");
-});
+
+(async () => {
+  try {
+    await prisma.$connect();
+    console.log("✅ Database connected");
+  } catch (err) {
+    console.error("💥 Failed to connect to database:", err.message);
+    process.exit(1);
+  }
+
+  httpServer.listen(PORT, () => {
+    console.log("─────────────────────────────────────────");
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`📦 Environment  : ${process.env.NODE_ENV || "development"}`);
+    console.log(`🌐 CORS Origin  : ${process.env.CLIENT_URL || "http://localhost:5173"}`);
+    console.log(`🗃️  Database     : ${process.env.DATABASE_URL ? "✅ configured" : "❌ NOT SET"}`);
+    console.log(`⚡ Redis        : ${process.env.REDIS_URL ? "✅ configured" : "⚠️  not set (fallback active)"}`);
+    console.log(`☁️  Cloudinary   : ${process.env.CLOUDINARY_CLOUD_NAME ? "✅ configured" : "⚠️  not configured"}`);
+    console.log("─────────────────────────────────────────");
+  });
+})();
+

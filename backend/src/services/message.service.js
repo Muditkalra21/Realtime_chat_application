@@ -45,7 +45,7 @@ export const createImageMessage = ({ imageUrl, senderId, receiverId }) =>
 
 /**
  * Update the status of a single message.
- * Only upgrades status — SEEN > DELIVERED > SENT (never downgrades).
+ * Only upgrades status — SENT -> DELIVERED -> SEEN (never downgrades).
  * @param {string} messageId
  * @param {"DELIVERED"|"SEEN"} status
  */

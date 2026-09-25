@@ -9,7 +9,7 @@ export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
   const { user } = useAuthStore();
-  const { addMessage, setOnlineUsers, setTyping, updateMessageStatus, markMessagesAsSeen, setUserLastSeen } = useChatStore();
+  const { addMessage, setOnlineUsers, setTyping, updateMessageStatus, markMessagesAsSeen, setUserLastSeen, incrementUnread } = useChatStore();
   const [socket, setSocket] = useState(null);
 
   useEffect(() => {
@@ -54,7 +54,9 @@ export const SocketProvider = ({ children }) => {
         addMessage(message);
         console.log("[Socket] Message added to chat window");
       } else {
-        console.log("[Socket] Message received but user is not in that chat — skipping UI update");
+        // Message is from a background chat — increment unread badge
+        console.log("[Socket] Message received from background chat — incrementing unread count");
+        incrementUnread(message.senderId);
       }
     });
 

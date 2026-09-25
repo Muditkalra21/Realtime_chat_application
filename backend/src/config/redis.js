@@ -8,7 +8,6 @@ let redis = null;
 const connectRedis = () => {
   try {
     redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
-      lazyConnect: true,
       retryStrategy: (times) => {
         // Stop retrying after 3 attempts
         if (times > 3) { 

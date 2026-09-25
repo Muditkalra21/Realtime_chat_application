@@ -11,17 +11,26 @@ const Sidebar = () => {
   const [search, setSearch] = useState("");
   const [showProfile, setShowProfile] = useState(false);
 
-  const { users, fetchUsers, selectedUser, setSelectedUser, isUserOnline, isLoadingUsers, lastSeenMap } = useChatStore();
+  const { users, fetchUsers, selectedUser, setSelectedUser, isUserOnline, isLoadingUsers, lastSeenMap, unreadCounts } = useChatStore();
   const { user, logout } = useAuthStore();
 
   useEffect(() => {
     fetchUsers();
   }, []);
 
-  const filtered = users.filter((u) =>
-    u.username.toLowerCase().includes(search.toLowerCase()) ||
-    u.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = users
+    .filter((u) =>
+      u.username.toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      // Sort by unread count descending (users with unread msgs appear on top)
+      const unreadA = unreadCounts[a.id] || 0;
+      const unreadB = unreadCounts[b.id] || 0;
+      if (unreadB !== unreadA) return unreadB - unreadA;
+      // Then alphabetically
+      return a.username.localeCompare(b.username);
+    });
 
   return (
     <>
@@ -122,11 +131,18 @@ const Sidebar = () => {
                       <p className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
                         {contact.username}
                       </p>
-                      {isOnline && (
-                        <span className="text-xs text-emerald-500 font-medium flex-shrink-0">
-                          Online
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {unreadCounts[contact.id] > 0 && (
+                          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary-600 text-white text-xs font-bold">
+                            {unreadCounts[contact.id] > 99 ? "99+" : unreadCounts[contact.id]}
+                          </span>
+                        )}
+                        {isOnline && unreadCounts[contact.id] === 0 && (
+                          <span className="text-xs text-emerald-500 font-medium">
+                            Online
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
                       {isOnline ? contact.email : formatLastSeen(lastSeenMap[contact.id])}
